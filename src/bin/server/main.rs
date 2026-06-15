@@ -97,6 +97,7 @@ fn main() {
     let mut lasers: Vec<LaserEffect> = Vec::new();
     let mut next_player_id = 1;
     let mut tick_id: u64 = 0;
+    let mut round_start_time: Option<Instant> = None;
 
     let mut match_state = MatchState::Lobby;
     let mut host_id: u32 = 0;
@@ -107,6 +108,17 @@ fn main() {
 
     loop {
         let now = Instant::now();
+
+        if match_state == MatchState::Playing {
+            if let Some(start_time) = round_start_time {
+                if now.duration_since(start_time).as_secs_f32() >= MATCH_DURATION_SECS {
+                    match_state = MatchState::GameOver;
+                    round_start_time = None;
+                    lasers.clear();
+                    println!("Round timer ended. Match over.");
+                }
+            }
+        }
 
         // 1. Process client packets
         let mut buf = [0; 4096];
@@ -125,6 +137,7 @@ fn main() {
                             &mut current_level_idx,
                             &mut lasers,
                             &mut match_state,
+                            &mut round_start_time,
                             &mut host_id,
                             &mut bots_enabled,
                         );
@@ -205,12 +218,20 @@ fn main() {
 
         // 7. Broadcast ticks
         tick_id += 1;
+        let round_time_left = if match_state == MatchState::Playing {
+            round_start_time
+                .map(|start_time| (MATCH_DURATION_SECS - now.duration_since(start_time).as_secs_f32()).max(0.0))
+                .unwrap_or(MATCH_DURATION_SECS)
+        } else {
+            0.0
+        };
         let tick_data = ServerStateTick {
             tick_id,
             players: players.values().cloned().collect(),
             lasers: lasers.clone(),
             level_index: current_level_idx,
             match_state,
+            round_time_left,
             host_id,
             bots_enabled,
         };
@@ -239,6 +260,7 @@ fn handle_client_message(
     current_level_idx: &mut usize,
     lasers: &mut Vec<LaserEffect>,
     match_state: &mut MatchState,
+    round_start_time: &mut Option<Instant>,
     host_id: &mut u32,
     bots_enabled: &mut bool,
 ) {
@@ -415,8 +437,33 @@ fn handle_client_message(
 
             *level = new_level;
             *current_level_idx = *level_idx;
-            reset_all_positions(players, level);
-            broadcast_map_update(socket, sessions, level, *current_level_idx);
+            if *match_state == MatchState::GameOver {
+                begin_new_round(level, players, match_state, round_start_time, lasers, *bots_enabled);
+                broadcast_map_update(socket, sessions, level, *current_level_idx);
+            } else {
+                reset_all_positions(players, level);
+                broadcast_map_update(socket, sessions, level, *current_level_idx);
+            }
+        }
+        ClientMessage::BackToLobby => {
+            let is_host = sessions.get(&src).map(|s| s.player_id == *host_id).unwrap_or(false);
+            if !is_host || *match_state != MatchState::GameOver {
+                return;
+            }
+
+            if let Some(session) = sessions.get_mut(&src) {
+                session.last_packet_time = Instant::now();
+            }
+
+            *match_state = MatchState::Lobby;
+            *round_start_time = None;
+            lasers.clear();
+            players.retain(|_, p| !p.is_bot);
+            for player in players.values_mut() {
+                player.health = 100;
+                player.is_alive = true;
+                player.respawn_timer = 0.0;
+            }
         }
         ClientMessage::CustomMap { width, height, cells } => {
             let is_host = sessions.get(&src).map(|s| s.player_id == *host_id).unwrap_or(false);
@@ -439,36 +486,8 @@ fn handle_client_message(
         ClientMessage::StartGame => {
             let is_host = sessions.get(&src).map(|s| s.player_id == *host_id).unwrap_or(false);
             if is_host && *match_state == MatchState::Lobby {
-                *match_state = MatchState::Playing;
+                begin_new_round(level, players, match_state, round_start_time, lasers, *bots_enabled);
                 println!("Host started the match!");
-
-                // Clean existing bots
-                players.retain(|_, p| !p.is_bot);
-
-                // Spawn bots up to remaining slots (total max 4)
-                if *bots_enabled {
-                    let human_count = players.values().filter(|p| !p.is_bot).count();
-                    let bots_to_spawn = 4 - human_count;
-                    for i in 1..=bots_to_spawn {
-                        let bot_id = 1000 + i as u32;
-                        let (bx, by) = find_random_spawn(level);
-                        let bot = PlayerState {
-                            id: bot_id,
-                            name: format!("RetroBot_{}", i),
-                            x: bx as f32 + 0.5,
-                            y: by as f32 + 0.5,
-                            dir_idx: (i % 4) as usize,
-                            score: 0,
-                            deaths: 0,
-                            health: 100,
-                            is_alive: true,
-                            is_bot: true,
-                            respawn_timer: 0.0,
-                        };
-                        players.insert(bot_id, bot);
-                    }
-                    println!("Spawned {} AI Bots. Total players: 4.", bots_to_spawn);
-                }
             }
         }
         ClientMessage::ToggleBots => {
@@ -506,6 +525,51 @@ fn spawn_replacement_bot(players: &mut HashMap<u32, PlayerState>, level: &Level)
     };
     players.insert(new_bot_id, bot);
     println!("Spawned replacement bot {}. Total remains 4.", new_bot_id);
+}
+
+fn begin_new_round(
+    level: &Level,
+    players: &mut HashMap<u32, PlayerState>,
+    match_state: &mut MatchState,
+    round_start_time: &mut Option<Instant>,
+    lasers: &mut Vec<LaserEffect>,
+    bots_enabled: bool,
+) {
+    players.retain(|_, p| !p.is_bot);
+    reset_all_positions(players, level);
+    for player in players.values_mut() {
+        player.score = 0;
+        player.deaths = 0;
+        player.respawn_timer = 0.0;
+    }
+
+    lasers.clear();
+    *match_state = MatchState::Playing;
+    *round_start_time = Some(Instant::now());
+
+    if bots_enabled {
+        let human_count = players.values().filter(|p| !p.is_bot).count();
+        let bots_to_spawn = 4usize.saturating_sub(human_count);
+        for i in 1..=bots_to_spawn {
+            let bot_id = 1000 + i as u32;
+            let (bx, by) = find_random_spawn(level);
+            let bot = PlayerState {
+                id: bot_id,
+                name: format!("RetroBot_{}", i),
+                x: bx as f32 + 0.5,
+                y: by as f32 + 0.5,
+                dir_idx: (i % 4) as usize,
+                score: 0,
+                deaths: 0,
+                health: 100,
+                is_alive: true,
+                is_bot: true,
+                respawn_timer: 0.0,
+            };
+            players.insert(bot_id, bot);
+        }
+        println!("Spawned {} AI Bots. Total players: 4.", bots_to_spawn);
+    }
 }
 
 fn broadcast_map_update(

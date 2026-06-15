@@ -9,6 +9,7 @@ pub use raycast::*;
 pub const DEFAULT_PORT: u16 = 10500;
 pub const TICK_RATE_HZ: u64 = 30;
 pub const HEARTBEAT_TIMEOUT_SECS: f32 = 5.0;
+pub const MATCH_DURATION_SECS: f32 = 120.0;
 
 pub const DIR_COORDS: [(i32, i32); 4] = [
     (1, 0),  // 0: East
