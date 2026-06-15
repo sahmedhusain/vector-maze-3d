@@ -465,24 +465,6 @@ fn handle_client_message(
                 player.respawn_timer = 0.0;
             }
         }
-        ClientMessage::CustomMap { width, height, cells } => {
-            let is_host = sessions.get(&src).map(|s| s.player_id == *host_id).unwrap_or(false);
-            if !is_host {
-                return;
-            }
-
-            if let Some(session) = sessions.get_mut(&src) {
-                session.last_packet_time = Instant::now();
-            }
-            *level = Level {
-                width: *width,
-                height: *height,
-                cells: cells.clone(),
-            };
-            *current_level_idx = 4;
-            reset_all_positions(players, level);
-            broadcast_map_update(socket, sessions, level, *current_level_idx);
-        }
         ClientMessage::StartGame => {
             let is_host = sessions.get(&src).map(|s| s.player_id == *host_id).unwrap_or(false);
             if is_host && *match_state == MatchState::Lobby {

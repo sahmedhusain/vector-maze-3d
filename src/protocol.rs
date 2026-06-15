@@ -17,7 +17,6 @@ pub enum ClientMessage {
     BackToLobby,
     Heartbeat,
     Leave,
-    CustomMap { width: usize, height: usize, cells: Vec<bool> },
     StartGame,
     ToggleBots,
 }
