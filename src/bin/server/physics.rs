@@ -1,7 +1,35 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use mp::*;
+
+pub fn cell_occupied_by_other(
+    players: &HashMap<u32, PlayerState>,
+    exclude_id: u32,
+    cell_x: i32,
+    cell_y: i32,
+) -> bool {
+    players.values().any(|player| {
+        player.id != exclude_id
+            && player.is_alive
+            && player.x.floor() as i32 == cell_x
+            && player.y.floor() as i32 == cell_y
+    })
+}
+
+pub fn occupied_cells(players: &HashMap<u32, PlayerState>, exclude_id: Option<u32>) -> HashSet<(usize, usize)> {
+    let mut occupied = HashSet::new();
+    for player in players.values() {
+        if exclude_id.map(|id| id == player.id).unwrap_or(false) {
+            continue;
+        }
+        if player.is_alive {
+            occupied.insert((player.x.floor() as usize, player.y.floor() as usize));
+        }
+    }
+    occupied
+}
 
 pub fn check_line_of_sight(
     self_id: u32,
@@ -128,25 +156,34 @@ pub fn fire_laser(
 }
 
 pub fn reset_all_positions(players: &mut HashMap<u32, PlayerState>, level: &Level) {
+    let mut occupied = HashSet::new();
     for player in players.values_mut() {
-        let (sx, sy) = find_random_spawn(level);
+        let (sx, sy) = find_random_spawn(level, &occupied);
         player.x = sx as f32 + 0.5;
         player.y = sy as f32 + 0.5;
         player.health = 100;
         player.is_alive = true;
+        occupied.insert((sx, sy));
     }
 }
 
-pub fn find_random_spawn(level: &Level) -> (usize, usize) {
+pub fn find_random_spawn(level: &Level, occupied: &HashSet<(usize, usize)>) -> (usize, usize) {
     let mut empty_cells = Vec::new();
     for r in 0..level.height {
         for c in 0..level.width {
-            if !level.cells[r * level.width + c] {
+            if !level.cells[r * level.width + c] && !occupied.contains(&(c, r)) {
                 empty_cells.push((c, r));
             }
         }
     }
     if empty_cells.is_empty() {
+        for r in 0..level.height {
+            for c in 0..level.width {
+                if !level.cells[r * level.width + c] {
+                    return (c, r);
+                }
+            }
+        }
         return (1, 1);
     }
     let mut rng = thread_rng();

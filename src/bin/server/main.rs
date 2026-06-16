@@ -8,7 +8,7 @@ mod ai;
 mod physics;
 
 use ai::update_bots;
-use physics::{reset_all_positions, find_random_spawn, fire_laser};
+use physics::{cell_occupied_by_other, occupied_cells, reset_all_positions, find_random_spawn, fire_laser};
 
 pub struct ClientSession {
     pub addr: SocketAddr,
@@ -198,15 +198,21 @@ fn main() {
                 session.shoot_cooldown -= 1;
             }
         }
-        for player in players.values_mut() {
-            if !player.is_alive {
+        let respawn_ids: Vec<u32> = players
+            .iter()
+            .filter_map(|(id, player)| if !player.is_alive { Some(*id) } else { None })
+            .collect();
+        let mut occupied = occupied_cells(&players, None);
+        for player_id in respawn_ids {
+            if let Some(player) = players.get_mut(&player_id) {
                 player.respawn_timer -= 1.0 / (TICK_RATE_HZ as f32);
                 if player.respawn_timer <= 0.0 {
-                    let (rx, ry) = find_random_spawn(&level);
+                    let (rx, ry) = find_random_spawn(&level, &occupied);
                     player.x = rx as f32 + 0.5;
                     player.y = ry as f32 + 0.5;
                     player.health = 100;
                     player.is_alive = true;
+                    occupied.insert((rx, ry));
                 }
             }
         }
@@ -297,7 +303,8 @@ fn handle_client_message(
             let is_new_player = !players.contains_key(&session.player_id);
 
             if is_new_player {
-                let (sx, sy) = find_random_spawn(level);
+                let occupied = occupied_cells(players, None);
+                let (sx, sy) = find_random_spawn(level, &occupied);
                 let p = PlayerState {
                     id: session.player_id,
                     name: name.clone(),
@@ -347,36 +354,53 @@ fn handle_client_message(
 
             if let Some(session) = sessions.get_mut(&src) {
                 session.last_packet_time = Instant::now();
-                if let Some(player) = players.get_mut(&session.player_id) {
-                    if player.is_alive {
+                let player_id = session.player_id;
+                if let Some(player_snapshot) = players.get(&player_id) {
+                    if player_snapshot.is_alive {
                         match action {
                             PlayerAction::MoveForward => {
-                                let (dx, dy) = DIR_COORDS[player.dir_idx];
-                                let nx = player.x.floor() as i32 + dx;
-                                let ny = player.y.floor() as i32 + dy;
-                                if nx >= 0 && nx < level.width as i32 && ny >= 0 && ny < level.height as i32 {
-                                    if !level.cells[ny as usize * level.width + nx as usize] {
+                                let (dx, dy) = DIR_COORDS[player_snapshot.dir_idx];
+                                let nx = player_snapshot.x.floor() as i32 + dx;
+                                let ny = player_snapshot.y.floor() as i32 + dy;
+                                let can_move = nx >= 0
+                                    && nx < level.width as i32
+                                    && ny >= 0
+                                    && ny < level.height as i32
+                                    && !level.cells[ny as usize * level.width + nx as usize]
+                                    && !cell_occupied_by_other(players, player_id, nx, ny);
+                                if can_move {
+                                    if let Some(player) = players.get_mut(&player_id) {
                                         player.x = nx as f32 + 0.5;
                                         player.y = ny as f32 + 0.5;
                                     }
                                 }
                             }
                             PlayerAction::MoveBackward => {
-                                let (dx, dy) = DIR_COORDS[player.dir_idx];
-                                let nx = player.x.floor() as i32 - dx;
-                                let ny = player.y.floor() as i32 - dy;
-                                if nx >= 0 && nx < level.width as i32 && ny >= 0 && ny < level.height as i32 {
-                                    if !level.cells[ny as usize * level.width + nx as usize] {
+                                let (dx, dy) = DIR_COORDS[player_snapshot.dir_idx];
+                                let nx = player_snapshot.x.floor() as i32 - dx;
+                                let ny = player_snapshot.y.floor() as i32 - dy;
+                                let can_move = nx >= 0
+                                    && nx < level.width as i32
+                                    && ny >= 0
+                                    && ny < level.height as i32
+                                    && !level.cells[ny as usize * level.width + nx as usize]
+                                    && !cell_occupied_by_other(players, player_id, nx, ny);
+                                if can_move {
+                                    if let Some(player) = players.get_mut(&player_id) {
                                         player.x = nx as f32 + 0.5;
                                         player.y = ny as f32 + 0.5;
                                     }
                                 }
                             }
                             PlayerAction::TurnLeft => {
-                                player.dir_idx = (player.dir_idx + 3) % 4;
+                                if let Some(player) = players.get_mut(&player_id) {
+                                    player.dir_idx = (player.dir_idx + 3) % 4;
+                                }
                             }
                             PlayerAction::TurnRight => {
-                                player.dir_idx = (player.dir_idx + 1) % 4;
+                                if let Some(player) = players.get_mut(&player_id) {
+                                    player.dir_idx = (player.dir_idx + 1) % 4;
+                                }
                             }
                         }
                     }
@@ -491,7 +515,8 @@ fn spawn_replacement_bot(players: &mut HashMap<u32, PlayerState>, level: &Level)
             break;
         }
     }
-    let (bx, by) = find_random_spawn(level);
+    let occupied = occupied_cells(players, None);
+    let (bx, by) = find_random_spawn(level, &occupied);
     let bot = PlayerState {
         id: new_bot_id,
         name: format!("RetroBot_{}", new_bot_id - 1000),
@@ -532,9 +557,11 @@ fn begin_new_round(
     if bots_enabled {
         let human_count = players.values().filter(|p| !p.is_bot).count();
         let bots_to_spawn = 4usize.saturating_sub(human_count);
+        let mut occupied = occupied_cells(players, None);
         for i in 1..=bots_to_spawn {
             let bot_id = 1000 + i as u32;
-            let (bx, by) = find_random_spawn(level);
+            let (bx, by) = find_random_spawn(level, &occupied);
+            occupied.insert((bx, by));
             let bot = PlayerState {
                 id: bot_id,
                 name: format!("RetroBot_{}", i),
