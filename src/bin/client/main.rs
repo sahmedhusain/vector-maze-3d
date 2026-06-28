@@ -11,12 +11,10 @@ use mp::{
 pub mod launcher;
 pub mod render;
 pub mod minimap;
-pub mod editor;
 
 use launcher::update_and_draw_launcher;
 use render::render_3d_viewport;
 use minimap::render_minimap;
-use editor::run_editor_tick;
 
 pub const CYAN: Color = Color::new(0.0, 1.0, 1.0, 1.0);
 
@@ -41,6 +39,11 @@ enum ClientState {
     Joining,
     Playing,
     Rejected { reason: String },
+}
+
+enum GameOverMenuState {
+    Main,
+    ChooseLevel,
 }
 
 fn window_conf() -> Conf {
@@ -199,12 +202,11 @@ async fn main() {
     let mut last_join_sent = Instant::now() - Duration::from_secs(5);
     let mut last_heartbeat_sent = Instant::now();
 
-    let mut edit_mode = false;
-    let mut local_edit_cells = Vec::new();
-
     let mut current_match_state = MatchState::Lobby;
     let mut server_host_id: u32 = 0;
     let mut bots_enabled = true;
+    let mut round_time_left = 0.0f32;
+    let mut game_over_menu = GameOverMenuState::Main;
 
     loop {
         let screen_w = screen_width();
@@ -256,7 +258,6 @@ async fn main() {
                     last_join_sent = Instant::now();
                 }
 
-                // Check reject
                 let reject_reason = {
                     let mut lock = reject_state.lock().unwrap();
                     lock.take()
@@ -266,7 +267,6 @@ async fn main() {
                     continue;
                 }
 
-                // Check welcome
                 let map_updated = {
                     let mut lock = welcome_map_state.lock().unwrap();
                     lock.take()
@@ -277,7 +277,6 @@ async fn main() {
                     map_height = h;
                     map_cells = cells.clone();
                     current_level_idx = lvl_idx;
-                    local_edit_cells = cells;
                     client_state = ClientState::Playing;
                     println!("Joined!");
                 }
@@ -306,14 +305,10 @@ async fn main() {
                     map_height = h;
                     map_cells = cells.clone();
                     current_level_idx = lvl_idx;
-                    if !edit_mode {
-                        local_edit_cells = cells;
-                    }
                 }
             }
         }
 
-        // 2. Process Tick
         let latest_tick = {
             let mut lock = server_tick_state.lock().unwrap();
             lock.take()
@@ -321,6 +316,7 @@ async fn main() {
         if let Some(tick) = latest_tick {
             active_lasers = tick.lasers;
             current_match_state = tick.match_state;
+            round_time_left = tick.round_time_left;
             server_host_id = tick.host_id;
             bots_enabled = tick.bots_enabled;
 
@@ -375,78 +371,83 @@ async fn main() {
         let is_host = my_player_id == server_host_id;
 
         // 3. Inputs
-        if !edit_mode {
-            if current_match_state == MatchState::Playing {
-                let is_alive = local_player_opt.map(|p| p.is_alive).unwrap_or(false);
-                if is_alive {
-                    let mut action = None;
-                    if is_key_pressed(KeyCode::W) || is_key_pressed(KeyCode::Up) {
-                        action = Some(PlayerAction::MoveForward);
-                    } else if is_key_pressed(KeyCode::S) || is_key_pressed(KeyCode::Down) {
-                        action = Some(PlayerAction::MoveBackward);
-                    } else if is_key_pressed(KeyCode::A) || is_key_pressed(KeyCode::Left) {
-                        action = Some(PlayerAction::TurnLeft);
-                    } else if is_key_pressed(KeyCode::D) || is_key_pressed(KeyCode::Right) {
-                        action = Some(PlayerAction::TurnRight);
-                    }
+        if current_match_state == MatchState::Playing {
+            let is_alive = local_player_opt.map(|p| p.is_alive).unwrap_or(false);
+            if is_alive {
+                let mut action = None;
+                if is_key_pressed(KeyCode::W) || is_key_pressed(KeyCode::Up) {
+                    action = Some(PlayerAction::MoveForward);
+                } else if is_key_pressed(KeyCode::S) || is_key_pressed(KeyCode::Down) {
+                    action = Some(PlayerAction::MoveBackward);
+                } else if is_key_pressed(KeyCode::A) || is_key_pressed(KeyCode::Left) {
+                    action = Some(PlayerAction::TurnLeft);
+                } else if is_key_pressed(KeyCode::D) || is_key_pressed(KeyCode::Right) {
+                    action = Some(PlayerAction::TurnRight);
+                }
 
-                    if let Some(act) = action {
-                        let inp = ClientMessage::Input { action: act };
-                        if let Ok(ser) = bincode::serialize(&inp) {
+                if let Some(act) = action {
+                    let inp = ClientMessage::Input { action: act };
+                    if let Ok(ser) = bincode::serialize(&inp) {
+                        let _ = socket.send_to(&ser, server_addr);
+                    }
+                }
+
+                if is_key_pressed(KeyCode::Space) || is_mouse_button_pressed(MouseButton::Left) {
+                    let (mx, my) = mouse_position();
+                    let click_in_viewport = mx >= view_x && mx <= view_x + view_w && my >= view_y && my <= view_y + view_h;
+                    if is_key_pressed(KeyCode::Space) || click_in_viewport {
+                        let shoot = ClientMessage::Shoot;
+                        if let Ok(ser) = bincode::serialize(&shoot) {
                             let _ = socket.send_to(&ser, server_addr);
                         }
                     }
-
-                    if is_key_pressed(KeyCode::Space) || is_mouse_button_pressed(MouseButton::Left) {
-                        let (mx, my) = mouse_position();
-                        let click_in_viewport = mx >= view_x && mx <= view_x + view_w && my >= view_y && my <= view_y + view_h;
-                        if is_key_pressed(KeyCode::Space) || click_in_viewport {
-                            let shoot = ClientMessage::Shoot;
-                            if let Ok(ser) = bincode::serialize(&shoot) {
-                                  let _ = socket.send_to(&ser, server_addr);
-                            }
+                }
+            }
+        } else if current_match_state == MatchState::Lobby && is_host {
+            if is_key_pressed(KeyCode::G) {
+                let start = ClientMessage::StartGame;
+                if let Ok(ser) = bincode::serialize(&start) {
+                    let _ = socket.send_to(&ser, server_addr);
+                }
+            } else if is_key_pressed(KeyCode::B) {
+                let toggle = ClientMessage::ToggleBots;
+                if let Ok(ser) = bincode::serialize(&toggle) {
+                    let _ = socket.send_to(&ser, server_addr);
+                }
+            }
+        } else if current_match_state == MatchState::GameOver && is_host {
+            match game_over_menu {
+                GameOverMenuState::Main => {
+                    if is_key_pressed(KeyCode::Key1) {
+                        game_over_menu = GameOverMenuState::ChooseLevel;
+                    } else if is_key_pressed(KeyCode::Key2) {
+                        let msg = ClientMessage::BackToLobby;
+                        if let Ok(ser) = bincode::serialize(&msg) {
+                            let _ = socket.send_to(&ser, server_addr);
                         }
                     }
                 }
-            } else if current_match_state == MatchState::Lobby && is_host {
-                // Host lobby inputs
-                if is_key_pressed(KeyCode::G) {
-                    let start = ClientMessage::StartGame;
-                    if let Ok(ser) = bincode::serialize(&start) {
-                        let _ = socket.send_to(&ser, server_addr);
+                GameOverMenuState::ChooseLevel => {
+                    let chosen_level = if is_key_pressed(KeyCode::Key1) {
+                        Some(0)
+                    } else if is_key_pressed(KeyCode::Key2) {
+                        Some(1)
+                    } else if is_key_pressed(KeyCode::Key3) {
+                        Some(2)
+                    } else if is_key_pressed(KeyCode::Key4) {
+                        Some(3)
+                    } else {
+                        None
+                    };
+
+                    if let Some(level_idx) = chosen_level {
+                        let req = ClientMessage::RequestLevel { level_idx };
+                        if let Ok(ser) = bincode::serialize(&req) {
+                            let _ = socket.send_to(&ser, server_addr);
+                        }
+                    } else if is_key_pressed(KeyCode::Escape) {
+                        game_over_menu = GameOverMenuState::Main;
                     }
-                } else if is_key_pressed(KeyCode::B) {
-                    let toggle = ClientMessage::ToggleBots;
-                    if let Ok(ser) = bincode::serialize(&toggle) {
-                        let _ = socket.send_to(&ser, server_addr);
-                    }
-                }
-            }
-        }
-
-        if is_key_pressed(KeyCode::E) && is_host {
-            edit_mode = !edit_mode;
-            if edit_mode {
-                local_edit_cells = map_cells.clone();
-            }
-        }
-
-        if !edit_mode && is_host {
-            let mut requested_level = None;
-            if is_key_pressed(KeyCode::Key1) {
-                requested_level = Some(0);
-            } else if is_key_pressed(KeyCode::Key2) {
-                requested_level = Some(1);
-            } else if is_key_pressed(KeyCode::Key3) {
-                requested_level = Some(2);
-            } else if is_key_pressed(KeyCode::Key4) {
-                requested_level = Some(3);
-            }
-
-            if let Some(lvl_idx) = requested_level {
-                let req = ClientMessage::RequestLevel { level_idx: lvl_idx };
-                if let Ok(ser) = bincode::serialize(&req) {
-                    let _ = socket.send_to(&ser, server_addr);
                 }
             }
         }
@@ -455,10 +456,18 @@ async fn main() {
         clear_background(Color::new(0.01, 0.02, 0.04, 1.0));
 
         draw_text_ex_font("MAZE WARS 3D", 20.0, 35.0, 28.0, CYAN, &font);
-        let status_str = if edit_mode {
-            "EDITOR MODE"
-        } else if current_match_state == MatchState::Lobby {
+        if current_match_state == MatchState::Playing {
+            let remaining = round_time_left.max(0.0);
+            let minutes = (remaining / 60.0).floor() as i32;
+            let seconds = (remaining % 60.0).floor() as i32;
+            draw_text_ex_font(&format!("TIME LEFT: {:02}:{:02}", minutes, seconds), 220.0, 35.0, 20.0, YELLOW, &font);
+        } else if current_match_state == MatchState::GameOver {
+            draw_text_ex_font("ROUND FINISHED", 220.0, 35.0, 20.0, RED, &font);
+        }
+        let status_str = if current_match_state == MatchState::Lobby {
             "MATCH LOBBY"
+        } else if current_match_state == MatchState::GameOver {
+            "MATCH OVER"
         } else {
             "PLAY MODE"
         };
@@ -466,20 +475,7 @@ async fn main() {
 
         draw_rectangle_lines(view_x - 1.0, view_y - 1.0, view_w + 2.0, view_h + 2.0, 2.0, Color::new(0.1, 0.2, 0.3, 1.0));
 
-        if edit_mode {
-            run_editor_tick(
-                view_x,
-                view_y,
-                view_w,
-                view_h,
-                &socket,
-                server_addr,
-                &mut local_edit_cells,
-                &mut map_width,
-                &mut map_height,
-                &font,
-            );
-        } else if current_match_state == MatchState::Lobby {
+        if current_match_state == MatchState::Lobby {
             // Draw Lobby screen
             draw_rectangle(view_x, view_y, view_w, view_h, Color::new(0.04, 0.06, 0.12, 1.0));
             draw_text_centered("MATCH LOBBY", view_x + view_w / 2.0, view_y + 80.0, 32.0, CYAN, &font);
@@ -505,6 +501,57 @@ async fn main() {
                 draw_text_centered("Press [ B ] to Toggle AI Bots", view_x + view_w / 2.0, view_y + 430.0, 14.0, GRAY, &font);
             } else {
                 draw_text_centered("Waiting for Host to start...", view_x + view_w / 2.0, view_y + 400.0, 16.0, LIGHTGRAY, &font);
+            }
+        } else if current_match_state == MatchState::GameOver {
+            draw_rectangle(view_x, view_y, view_w, view_h, Color::new(0.03, 0.04, 0.07, 1.0));
+            draw_text_centered("MATCH OVER", view_x + view_w / 2.0, view_y + 80.0, 34.0, RED, &font);
+            draw_text_centered("The two-minute round has ended.", view_x + view_w / 2.0, view_y + 120.0, 18.0, LIGHTGRAY, &font);
+
+            let popup_w = 420.0;
+            let popup_h = 250.0;
+            let popup_x = view_x + (view_w - popup_w) / 2.0;
+            let popup_y = view_y + (view_h - popup_h) / 2.0;
+            draw_rectangle(popup_x, popup_y, popup_w, popup_h, Color::new(0.02, 0.05, 0.10, 0.95));
+            draw_rectangle_lines(popup_x, popup_y, popup_w, popup_h, 2.0, CYAN);
+
+            match game_over_menu {
+                GameOverMenuState::Main => {
+                    draw_text_centered("Choose an option", popup_x + popup_w / 2.0, popup_y + 42.0, 22.0, WHITE, &font);
+                    if draw_popup_button("1. Play Again", popup_x + 60.0, popup_y + 90.0, 300.0, 40.0, &font) && is_host {
+                        game_over_menu = GameOverMenuState::ChooseLevel;
+                    }
+                    if draw_popup_button("2. Back to Lobby", popup_x + 60.0, popup_y + 145.0, 300.0, 40.0, &font) && is_host {
+                        let msg = ClientMessage::BackToLobby;
+                        if let Ok(ser) = bincode::serialize(&msg) {
+                            let _ = socket.send_to(&ser, server_addr);
+                        }
+                    }
+                    if !is_host {
+                        draw_text_centered("Waiting for the host...", popup_x + popup_w / 2.0, popup_y + 215.0, 14.0, GRAY, &font);
+                    }
+                }
+                GameOverMenuState::ChooseLevel => {
+                    draw_text_centered("Pick a level to restart", popup_x + popup_w / 2.0, popup_y + 38.0, 20.0, WHITE, &font);
+                    let level_buttons = [
+                        (0usize, "1. Level 1"),
+                        (1usize, "2. Level 2"),
+                        (2usize, "3. Level 3"),
+                        (3usize, "4. Random Maze"),
+                    ];
+                    let mut button_y = popup_y + 72.0;
+                    for (level_idx, label) in level_buttons {
+                        if draw_popup_button(label, popup_x + 55.0, button_y, 310.0, 32.0, &font) && is_host {
+                            let req = ClientMessage::RequestLevel { level_idx };
+                            if let Ok(ser) = bincode::serialize(&req) {
+                                let _ = socket.send_to(&ser, server_addr);
+                            }
+                        }
+                        button_y += 38.0;
+                    }
+                    if draw_popup_button("Back", popup_x + 55.0, popup_y + 226.0, 310.0, 24.0, &font) {
+                        game_over_menu = GameOverMenuState::Main;
+                    }
+                }
             }
         } else {
             // Render Viewport
@@ -586,12 +633,12 @@ async fn main() {
         draw_rectangle_lines(sidebar_x, help_y, sidebar_w, help_h, 1.0, Color::new(0.1, 0.15, 0.25, 1.0));
         draw_text_ex_font("KEYBOARD HELP", sidebar_x + 10.0, help_y + 20.0, 14.0, CYAN, &font);
 
-        let help_text = if edit_mode {
+        let help_text = if current_match_state == MatchState::GameOver {
             vec![
-                "L-Click: Place Wall  | R-Click: Erase Wall",
-                "R: Random Maze       | C: Clear Grid Map",
-                "U: Upload Custom Map to Server",
-                "E: Exit Editor Mode",
+                "Play Again: choose level 1-4.",
+                "Back to Lobby: return without disconnecting.",
+                "Only the host can pick the next action.",
+                "",
             ]
         } else if current_match_state == MatchState::Lobby {
             if is_host {
@@ -599,7 +646,7 @@ async fn main() {
                     "G: Start Game Match",
                     "B: Toggle Bots AI",
                     "1, 2, 3: Choose Level map | 4: Random",
-                    "E: Open Level Editor",
+                    "",
                 ]
             } else {
                 vec![
@@ -629,7 +676,6 @@ async fn main() {
             1 => "Level 2 (Medium)".to_string(),
             2 => "Level 3 (Labyrinth)".to_string(),
             3 => "Randomly Generated Labyrinth".to_string(),
-            4 => "Custom Client Map".to_string(),
             _ => "Unknown Labyrinth".to_string(),
         };
         draw_text_ex_font(&format!("Level: {}", level_name), view_x, view_y + view_h + 28.0, 16.0, LIGHTGRAY, &font);
@@ -666,4 +712,18 @@ pub fn draw_text_ex_font(text: &str, x: f32, y: f32, size: f32, color: Color, fo
             ..Default::default()
         },
     );
+}
+
+fn draw_popup_button(text: &str, x: f32, y: f32, w: f32, h: f32, font: &Font) -> bool {
+    let (mx, my) = mouse_position();
+    let hover = mx >= x && mx <= x + w && my >= y && my <= y + h;
+    let bg = if hover { Color::new(0.0, 0.80, 0.72, 0.96) } else { Color::new(0.05, 0.12, 0.22, 0.96) };
+    let border = if hover { WHITE } else { Color::new(0.15, 0.28, 0.40, 1.0) };
+    let text_color = if hover { BLACK } else { WHITE };
+
+    draw_rectangle(x, y, w, h, bg);
+    draw_rectangle_lines(x, y, w, h, 1.5, border);
+    draw_text_centered(text, x + w / 2.0, y + h / 2.0 + 4.0, 14.0, text_color, font);
+
+    hover && is_mouse_button_pressed(MouseButton::Left)
 }

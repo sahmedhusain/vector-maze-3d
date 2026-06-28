@@ -8,7 +8,7 @@ mod ai;
 mod physics;
 
 use ai::update_bots;
-use physics::{reset_all_positions, find_random_spawn, fire_laser};
+use physics::{cell_occupied_by_other, occupied_cells, reset_all_positions, find_random_spawn, fire_laser};
 
 pub struct ClientSession {
     pub addr: SocketAddr,
@@ -97,6 +97,7 @@ fn main() {
     let mut lasers: Vec<LaserEffect> = Vec::new();
     let mut next_player_id = 1;
     let mut tick_id: u64 = 0;
+    let mut round_start_time: Option<Instant> = None;
 
     let mut match_state = MatchState::Lobby;
     let mut host_id: u32 = 0;
@@ -107,6 +108,17 @@ fn main() {
 
     loop {
         let now = Instant::now();
+
+        if match_state == MatchState::Playing {
+            if let Some(start_time) = round_start_time {
+                if now.duration_since(start_time).as_secs_f32() >= MATCH_DURATION_SECS {
+                    match_state = MatchState::GameOver;
+                    round_start_time = None;
+                    lasers.clear();
+                    println!("Round timer ended. Match over.");
+                }
+            }
+        }
 
         // 1. Process client packets
         let mut buf = [0; 4096];
@@ -125,6 +137,7 @@ fn main() {
                             &mut current_level_idx,
                             &mut lasers,
                             &mut match_state,
+                            &mut round_start_time,
                             &mut host_id,
                             &mut bots_enabled,
                         );
@@ -185,15 +198,21 @@ fn main() {
                 session.shoot_cooldown -= 1;
             }
         }
-        for player in players.values_mut() {
-            if !player.is_alive {
+        let respawn_ids: Vec<u32> = players
+            .iter()
+            .filter_map(|(id, player)| if !player.is_alive { Some(*id) } else { None })
+            .collect();
+        let mut occupied = occupied_cells(&players, None);
+        for player_id in respawn_ids {
+            if let Some(player) = players.get_mut(&player_id) {
                 player.respawn_timer -= 1.0 / (TICK_RATE_HZ as f32);
                 if player.respawn_timer <= 0.0 {
-                    let (rx, ry) = find_random_spawn(&level);
+                    let (rx, ry) = find_random_spawn(&level, &occupied);
                     player.x = rx as f32 + 0.5;
                     player.y = ry as f32 + 0.5;
                     player.health = 100;
                     player.is_alive = true;
+                    occupied.insert((rx, ry));
                 }
             }
         }
@@ -205,12 +224,20 @@ fn main() {
 
         // 7. Broadcast ticks
         tick_id += 1;
+        let round_time_left = if match_state == MatchState::Playing {
+            round_start_time
+                .map(|start_time| (MATCH_DURATION_SECS - now.duration_since(start_time).as_secs_f32()).max(0.0))
+                .unwrap_or(MATCH_DURATION_SECS)
+        } else {
+            0.0
+        };
         let tick_data = ServerStateTick {
             tick_id,
             players: players.values().cloned().collect(),
             lasers: lasers.clone(),
             level_index: current_level_idx,
             match_state,
+            round_time_left,
             host_id,
             bots_enabled,
         };
@@ -239,6 +266,7 @@ fn handle_client_message(
     current_level_idx: &mut usize,
     lasers: &mut Vec<LaserEffect>,
     match_state: &mut MatchState,
+    round_start_time: &mut Option<Instant>,
     host_id: &mut u32,
     bots_enabled: &mut bool,
 ) {
@@ -275,7 +303,8 @@ fn handle_client_message(
             let is_new_player = !players.contains_key(&session.player_id);
 
             if is_new_player {
-                let (sx, sy) = find_random_spawn(level);
+                let occupied = occupied_cells(players, None);
+                let (sx, sy) = find_random_spawn(level, &occupied);
                 let p = PlayerState {
                     id: session.player_id,
                     name: name.clone(),
@@ -325,36 +354,53 @@ fn handle_client_message(
 
             if let Some(session) = sessions.get_mut(&src) {
                 session.last_packet_time = Instant::now();
-                if let Some(player) = players.get_mut(&session.player_id) {
-                    if player.is_alive {
+                let player_id = session.player_id;
+                if let Some(player_snapshot) = players.get(&player_id) {
+                    if player_snapshot.is_alive {
                         match action {
                             PlayerAction::MoveForward => {
-                                let (dx, dy) = DIR_COORDS[player.dir_idx];
-                                let nx = player.x.floor() as i32 + dx;
-                                let ny = player.y.floor() as i32 + dy;
-                                if nx >= 0 && nx < level.width as i32 && ny >= 0 && ny < level.height as i32 {
-                                    if !level.cells[ny as usize * level.width + nx as usize] {
+                                let (dx, dy) = DIR_COORDS[player_snapshot.dir_idx];
+                                let nx = player_snapshot.x.floor() as i32 + dx;
+                                let ny = player_snapshot.y.floor() as i32 + dy;
+                                let can_move = nx >= 0
+                                    && nx < level.width as i32
+                                    && ny >= 0
+                                    && ny < level.height as i32
+                                    && !level.cells[ny as usize * level.width + nx as usize]
+                                    && !cell_occupied_by_other(players, player_id, nx, ny);
+                                if can_move {
+                                    if let Some(player) = players.get_mut(&player_id) {
                                         player.x = nx as f32 + 0.5;
                                         player.y = ny as f32 + 0.5;
                                     }
                                 }
                             }
                             PlayerAction::MoveBackward => {
-                                let (dx, dy) = DIR_COORDS[player.dir_idx];
-                                let nx = player.x.floor() as i32 - dx;
-                                let ny = player.y.floor() as i32 - dy;
-                                if nx >= 0 && nx < level.width as i32 && ny >= 0 && ny < level.height as i32 {
-                                    if !level.cells[ny as usize * level.width + nx as usize] {
+                                let (dx, dy) = DIR_COORDS[player_snapshot.dir_idx];
+                                let nx = player_snapshot.x.floor() as i32 - dx;
+                                let ny = player_snapshot.y.floor() as i32 - dy;
+                                let can_move = nx >= 0
+                                    && nx < level.width as i32
+                                    && ny >= 0
+                                    && ny < level.height as i32
+                                    && !level.cells[ny as usize * level.width + nx as usize]
+                                    && !cell_occupied_by_other(players, player_id, nx, ny);
+                                if can_move {
+                                    if let Some(player) = players.get_mut(&player_id) {
                                         player.x = nx as f32 + 0.5;
                                         player.y = ny as f32 + 0.5;
                                     }
                                 }
                             }
                             PlayerAction::TurnLeft => {
-                                player.dir_idx = (player.dir_idx + 3) % 4;
+                                if let Some(player) = players.get_mut(&player_id) {
+                                    player.dir_idx = (player.dir_idx + 3) % 4;
+                                }
                             }
                             PlayerAction::TurnRight => {
-                                player.dir_idx = (player.dir_idx + 1) % 4;
+                                if let Some(player) = players.get_mut(&player_id) {
+                                    player.dir_idx = (player.dir_idx + 1) % 4;
+                                }
                             }
                         }
                     }
@@ -415,60 +461,39 @@ fn handle_client_message(
 
             *level = new_level;
             *current_level_idx = *level_idx;
-            reset_all_positions(players, level);
-            broadcast_map_update(socket, sessions, level, *current_level_idx);
+            if *match_state == MatchState::GameOver {
+                begin_new_round(level, players, match_state, round_start_time, lasers, *bots_enabled);
+                broadcast_map_update(socket, sessions, level, *current_level_idx);
+            } else {
+                reset_all_positions(players, level);
+                broadcast_map_update(socket, sessions, level, *current_level_idx);
+            }
         }
-        ClientMessage::CustomMap { width, height, cells } => {
+        ClientMessage::BackToLobby => {
             let is_host = sessions.get(&src).map(|s| s.player_id == *host_id).unwrap_or(false);
-            if !is_host {
+            if !is_host || *match_state != MatchState::GameOver {
                 return;
             }
 
             if let Some(session) = sessions.get_mut(&src) {
                 session.last_packet_time = Instant::now();
             }
-            *level = Level {
-                width: *width,
-                height: *height,
-                cells: cells.clone(),
-            };
-            *current_level_idx = 4;
-            reset_all_positions(players, level);
-            broadcast_map_update(socket, sessions, level, *current_level_idx);
+
+            *match_state = MatchState::Lobby;
+            *round_start_time = None;
+            lasers.clear();
+            players.retain(|_, p| !p.is_bot);
+            for player in players.values_mut() {
+                player.health = 100;
+                player.is_alive = true;
+                player.respawn_timer = 0.0;
+            }
         }
         ClientMessage::StartGame => {
             let is_host = sessions.get(&src).map(|s| s.player_id == *host_id).unwrap_or(false);
             if is_host && *match_state == MatchState::Lobby {
-                *match_state = MatchState::Playing;
+                begin_new_round(level, players, match_state, round_start_time, lasers, *bots_enabled);
                 println!("Host started the match!");
-
-                // Clean existing bots
-                players.retain(|_, p| !p.is_bot);
-
-                // Spawn bots up to remaining slots (total max 4)
-                if *bots_enabled {
-                    let human_count = players.values().filter(|p| !p.is_bot).count();
-                    let bots_to_spawn = 4 - human_count;
-                    for i in 1..=bots_to_spawn {
-                        let bot_id = 1000 + i as u32;
-                        let (bx, by) = find_random_spawn(level);
-                        let bot = PlayerState {
-                            id: bot_id,
-                            name: format!("RetroBot_{}", i),
-                            x: bx as f32 + 0.5,
-                            y: by as f32 + 0.5,
-                            dir_idx: (i % 4) as usize,
-                            score: 0,
-                            deaths: 0,
-                            health: 100,
-                            is_alive: true,
-                            is_bot: true,
-                            respawn_timer: 0.0,
-                        };
-                        players.insert(bot_id, bot);
-                    }
-                    println!("Spawned {} AI Bots. Total players: 4.", bots_to_spawn);
-                }
             }
         }
         ClientMessage::ToggleBots => {
@@ -490,7 +515,8 @@ fn spawn_replacement_bot(players: &mut HashMap<u32, PlayerState>, level: &Level)
             break;
         }
     }
-    let (bx, by) = find_random_spawn(level);
+    let occupied = occupied_cells(players, None);
+    let (bx, by) = find_random_spawn(level, &occupied);
     let bot = PlayerState {
         id: new_bot_id,
         name: format!("RetroBot_{}", new_bot_id - 1000),
@@ -506,6 +532,53 @@ fn spawn_replacement_bot(players: &mut HashMap<u32, PlayerState>, level: &Level)
     };
     players.insert(new_bot_id, bot);
     println!("Spawned replacement bot {}. Total remains 4.", new_bot_id);
+}
+
+fn begin_new_round(
+    level: &Level,
+    players: &mut HashMap<u32, PlayerState>,
+    match_state: &mut MatchState,
+    round_start_time: &mut Option<Instant>,
+    lasers: &mut Vec<LaserEffect>,
+    bots_enabled: bool,
+) {
+    players.retain(|_, p| !p.is_bot);
+    reset_all_positions(players, level);
+    for player in players.values_mut() {
+        player.score = 0;
+        player.deaths = 0;
+        player.respawn_timer = 0.0;
+    }
+
+    lasers.clear();
+    *match_state = MatchState::Playing;
+    *round_start_time = Some(Instant::now());
+
+    if bots_enabled {
+        let human_count = players.values().filter(|p| !p.is_bot).count();
+        let bots_to_spawn = 4usize.saturating_sub(human_count);
+        let mut occupied = occupied_cells(players, None);
+        for i in 1..=bots_to_spawn {
+            let bot_id = 1000 + i as u32;
+            let (bx, by) = find_random_spawn(level, &occupied);
+            occupied.insert((bx, by));
+            let bot = PlayerState {
+                id: bot_id,
+                name: format!("RetroBot_{}", i),
+                x: bx as f32 + 0.5,
+                y: by as f32 + 0.5,
+                dir_idx: (i % 4) as usize,
+                score: 0,
+                deaths: 0,
+                health: 100,
+                is_alive: true,
+                is_bot: true,
+                respawn_timer: 0.0,
+            };
+            players.insert(bot_id, bot);
+        }
+        println!("Spawned {} AI Bots. Total players: 4.", bots_to_spawn);
+    }
 }
 
 fn broadcast_map_update(

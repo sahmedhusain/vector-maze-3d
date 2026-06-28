@@ -20,7 +20,6 @@
 - **Smooth UDP Multiplayer**: Low-latency networking that synchronizes players, bot movements, lasers, and scoreboard stats at a smooth 30Hz tick rate.
 - **Sleek Connection Launcher**: A main menu screen where you can type server details, save aliases for your favorite hosts, and delete old items.
 - **AI Bots**: If you don't have enough players, you can spawn smart bots to fill up the server (max 4 players total).
-- **Map Editor**: An interactive mode for the host player to paint wall grids, generate random mazes with a single keypress, and upload them to everyone connected in real-time.
 - **High-DPI Support**: The interface is fully responsive. It launches fullscreen, resizes dynamically, and uses sharp vector text so the HUD looks clean on any monitor.
 
 ---
@@ -42,7 +41,7 @@
 ## 🧭 Quick Tour
 
 1. **Connect**: Start the client. You can use the launcher menu to save and click on servers, or bypass it using command-line arguments.
-2. **Lobby**: The first player to connect is crowned the **Host**. The Host can press keys `1`-`3` to switch default levels, `4` to generate a random maze, `B` to toggle AI bots, or `E` to open the map builder.
+2. **Lobby**: The first player to connect is crowned the **Host**. The Host can press keys `1`-`3` to switch default levels, `4` to generate a random maze, and `B` to toggle AI bots.
 3. **Fight**: Once the Host presses `G` to start the game, navigate the maze using `WASD` or Arrow keys. Click your mouse or hit `Space` to shoot lasers and score points!
 
 <p align="center">
@@ -56,28 +55,27 @@
 *Below are placeholders for the interface screens. You can add your own screenshots here to showcase your project.*
 
 <div align="center">
-	<table>
-		<tr>
-			<td align="center" width="50%">
-				<img src="screenshots/launcher.png" alt="Graphical Menu Launcher" width="100%" style="border: 2px solid #0EA5E9; border-radius: 8px;" />
-				<p><strong>Connection Launcher (with Saved History)</strong></p>
-			</td>
-			<td align="center" width="50%">
-				<img src="screenshots/lobby.png" alt="Match Lobby State" width="100%" style="border: 2px solid #0EA5E9; border-radius: 8px;" />
-				<p><strong>Match Lobby Coordinator (Max 4 Players)</strong></p>
-			</td>
-		</tr>
-		<tr>
-			<td align="center" width="50%">
-				<img src="screenshots/gameplay.png" alt="3D Viewport Raycaster" width="100%" style="border: 2px solid #0EA5E9; border-radius: 8px;" />
-				<p><strong>Retro 3D Raycasting Viewport & HUD</strong></p>
-			</td>
-			<td align="center" width="50%">
-				<img src="screenshots/editor.png" alt="In-Game Level Builder" width="100%" style="border: 2px solid #0EA5E9; border-radius: 8px;" />
-				<p><strong>2D Map Creator Mode</strong></p>
-			</td>
-		</tr>
-	</table>
+    <table>
+        <tr>
+            <td align="center" width="50%">
+                <img src="screenshots/launcher.png" alt="Graphical Menu Launcher" width="100%" style="border: 2px solid #0EA5E9; border-radius: 8px;" />
+                <p><strong>Connection Launcher (with Saved History)</strong></p>
+            </td>
+            <td align="center" width="50%">
+                <img src="screenshots/lobby.png" alt="Match Lobby State" width="100%" style="border: 2px solid #0EA5E9; border-radius: 8px;" />
+                <p><strong>Match Lobby Coordinator (Max 4 Players)</strong></p>
+            </td>
+        </tr>
+        <tr>
+            <td align="center" width="50%">
+                <img src="screenshots/gameplay.png" alt="3D Viewport Raycaster" width="100%" style="border: 2px solid #0EA5E9; border-radius: 8px;" />
+                <p><strong>Retro 3D Raycasting Viewport & HUD</strong></p>
+            </td>
+            <td align="center" width="50%">
+                <p><strong>Gameplay HUD & Mini-map</strong></p>
+            </td>
+        </tr>
+    </table>
 </div>
 
 ---
@@ -110,20 +108,7 @@ sequenceDiagram
     Client->>Server: ClientMessage::Heartbeat (every 1s)
 ```
 
-#### 2. Level Editor Synchronization
-When the Host designs a custom map, it syncs with other players automatically:
-
-```mermaid
-flowchart TD
-    Host[Host Player] -->|Press E| Editor[Level Editor Mode]
-    Editor -->|Left-Click / Right-Click| Paint[Paint Wall / Erase Wall]
-    Paint -->|Press U| SendMap[Send ClientMessage::CustomMap to Server]
-    SendMap --> Server[Server Receives & Updates Level]
-    Server -->|Broadcast ServerMessage::MapUpdate| Clients[All Connected Clients]
-    Clients -->|Redraw Map| UI[Refresh Gameplay & Mini-map]
-```
-
-#### 3. Match Progression flow
+#### 2. Match Progression flow
 Players transition between states depending on host actions and gameplay events:
 
 ```mermaid
@@ -189,7 +174,6 @@ pub enum ClientMessage {
     RequestLevel { level_idx: usize },
     Heartbeat,
     Leave,
-    CustomMap { width: usize, height: usize, cells: Vec<bool> },
     StartGame,
     ToggleBots,
 }
@@ -254,7 +238,6 @@ cargo run --release --bin client -- --ip 127.0.0.1:10500 --name Sayed
   - `launcher.rs` — Draws launcher cards and history list.
   - `render.rs` -> Viewport drawings.
   - `minimap.rs` -> Navigational overlay.
-  - `editor.rs` -> Grid painter.
 
 ---
 

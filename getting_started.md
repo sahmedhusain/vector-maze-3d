@@ -12,7 +12,6 @@ This guide will walk you through compiling, running, and playing **Maze Wars 3D*
 5. [Using the Connection Launcher](#-using-the-connection-launcher)
 6. [How the Lobby Works](#-how-the-lobby-works)
 7. [In-Game Controls](#-in-game-controls)
-8. [Drawing Custom Maps](#-drawing-custom-maps)
 9. [Setting up LAN Matches](#-setting-up-lan-matches)
 
 ---
@@ -110,12 +109,11 @@ If you launch the client without arguments, you'll see a responsive, modern conn
 
 When you connect, you enter the lobby. Here are the rules of the lobby:
 - **Who is the Host?** The first player to connect to the server becomes the Host. Guests will see `"Waiting for host to start..."` on their screens.
-- **What can the Host do?** Only the Host can change the level, toggle bots, enter the level editor, or start the match.
+- **What can the Host do?** Only the Host can change the level, toggle bots, or start the match.
 - **Lobby Keys for the Host**:
   - `1`, `2`, `3` — Load pre-designed static maps (Level 0, 1, 2).
   - `4` — Generate a random level map using the DFS maze algorithm.
   - `B` — Toggle AI bots (spawns bots to reach the 4-player cap, or clears them).
-  - `E` — Open the Level Editor to paint custom walls.
   - `G` — Start the match.
 
 ---
@@ -135,17 +133,6 @@ Once the match starts:
   - `ESC` — Disconnect from the match and return to the main connection launcher.
 
 ---
-
-## 🛠 Drawing Custom Maps
-
-Only the **Host** can enter the Map Editor. Press `E` while in the Lobby to start painting:
-
-- **Drawing**: Left-click on any grid square to place a wall.
-- **Erasing**: Right-click on a grid square to remove a wall. (Note: Border walls are locked to keep players inside).
-- **Clear Canvas**: Press `C` to wipe the grid (retains outer border walls).
-- **Random Maze**: Press `R` to generate a random DFS labyrinth.
-- **Sync & Upload**: Press `U` to send your custom map to the server. The server will update the active level and instantly push the new map to all players in the lobby.
-- **Exit Editor**: Press `E` to close the editor and return to the lobby.
 
 ---
 

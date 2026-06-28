@@ -3,7 +3,7 @@ use rand::thread_rng;
 use rand::Rng;
 use mp::*;
 
-use crate::physics::{check_line_of_sight, fire_laser};
+use crate::physics::{cell_occupied_by_other, check_line_of_sight, fire_laser};
 
 pub fn update_bots(
     bot_ids: &[u32],
@@ -54,7 +54,9 @@ pub fn update_bots(
                 let nx = bot.x.floor() as i32 + dx;
                 let ny = bot.y.floor() as i32 + dy;
                 if nx >= 0 && nx < level.width as i32 && ny >= 0 && ny < level.height as i32 {
-                    if !level.cells[ny as usize * level.width + nx as usize] {
+                    if !level.cells[ny as usize * level.width + nx as usize]
+                        && !cell_occupied_by_other(players, bot.id, nx, ny)
+                    {
                         bot.x = nx as f32 + 0.5;
                         bot.y = ny as f32 + 0.5;
                     } else if rng.gen_bool(0.5) {

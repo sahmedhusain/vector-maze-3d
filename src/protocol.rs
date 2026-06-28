@@ -14,9 +14,9 @@ pub enum ClientMessage {
     Input { action: PlayerAction },
     Shoot,
     RequestLevel { level_idx: usize },
+    BackToLobby,
     Heartbeat,
     Leave,
-    CustomMap { width: usize, height: usize, cells: Vec<bool> },
     StartGame,
     ToggleBots,
 }
@@ -25,6 +25,7 @@ pub enum ClientMessage {
 pub enum MatchState {
     Lobby,
     Playing,
+    GameOver,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -80,6 +81,7 @@ pub struct ServerStateTick {
     pub lasers: Vec<LaserEffect>,
     pub level_index: usize,
     pub match_state: MatchState,
+    pub round_time_left: f32,
     pub host_id: u32,
     pub bots_enabled: bool,
 }
