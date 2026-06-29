@@ -1,20 +1,17 @@
+use macroquad::prelude::*;
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use macroquad::prelude::*;
 
-use mp::{
-    ClientMessage, LaserEffect, PlayerAction, ServerMessage,
-    dir_idx_to_angle, MatchState,
-};
+use mp::{dir_idx_to_angle, ClientMessage, LaserEffect, MatchState, PlayerAction, ServerMessage};
 
 pub mod launcher;
-pub mod render;
 pub mod minimap;
+pub mod render;
 
 use launcher::update_and_draw_launcher;
-use render::render_3d_viewport;
 use minimap::render_minimap;
+use render::render_3d_viewport;
 
 pub const CYAN: Color = Color::new(0.0, 1.0, 1.0, 1.0);
 
@@ -111,7 +108,9 @@ async fn main() {
     }
 
     let socket = UdpSocket::bind("0.0.0.0:0").expect("Failed to bind");
-    socket.set_nonblocking(true).expect("Failed to set non-blocking");
+    socket
+        .set_nonblocking(true)
+        .expect("Failed to set non-blocking");
 
     let server_tick_state = Arc::new(Mutex::new(None));
     let welcome_map_state = Arc::new(Mutex::new(None));
@@ -139,7 +138,13 @@ async fn main() {
                                 is_host: _,
                             } => {
                                 let mut lock = map_recv.lock().unwrap();
-                                *lock = Some((player_id, map_width, map_height, map_cells, level_index));
+                                *lock = Some((
+                                    player_id,
+                                    map_width,
+                                    map_height,
+                                    map_cells,
+                                    level_index,
+                                ));
                             }
                             ServerMessage::Tick(tick) => {
                                 let mut lock = state_recv.lock().unwrap();
@@ -153,7 +158,13 @@ async fn main() {
                             } => {
                                 let mut lock = map_recv.lock().unwrap();
                                 let current_player_id = lock.as_ref().map(|x| x.0).unwrap_or(0);
-                                *lock = Some((current_player_id, map_width, map_height, map_cells, level_index));
+                                *lock = Some((
+                                    current_player_id,
+                                    map_width,
+                                    map_height,
+                                    map_cells,
+                                    level_index,
+                                ));
                             }
                             ServerMessage::Reject { reason } => {
                                 let mut lock = reject_recv.lock().unwrap();
@@ -196,7 +207,8 @@ async fn main() {
     let mut map_cells = Vec::new();
     let mut current_level_idx = 0;
 
-    let mut visual_players: std::collections::HashMap<u32, VisualPlayer> = std::collections::HashMap::new();
+    let mut visual_players: std::collections::HashMap<u32, VisualPlayer> =
+        std::collections::HashMap::new();
     let mut active_lasers: Vec<LaserEffect> = Vec::new();
 
     let mut last_join_sent = Instant::now() - Duration::from_secs(5);
@@ -232,7 +244,9 @@ async fn main() {
         // 1. Connection check
         match &mut client_state {
             ClientState::Launcher => {
-                if let Some((selected_ip, chosen_user)) = update_and_draw_launcher(&mut launcher_state, dt, &font) {
+                if let Some((selected_ip, chosen_user)) =
+                    update_and_draw_launcher(&mut launcher_state, dt, &font)
+                {
                     server_addr = selected_ip.parse().unwrap();
                     username = chosen_user;
                     client_state = ClientState::Joining;
@@ -243,15 +257,38 @@ async fn main() {
             }
             ClientState::Rejected { reason } => {
                 clear_background(Color::new(0.12, 0.04, 0.04, 1.0));
-                draw_text_centered("CONNECTION REJECTED", screen_w / 2.0, screen_h / 2.0 - 30.0, 32.0, RED, &font);
-                draw_text_centered(reason, screen_w / 2.0, screen_h / 2.0 + 10.0, 20.0, WHITE, &font);
-                draw_text_centered("Press ESC to exit", screen_w / 2.0, screen_h / 2.0 + 50.0, 14.0, GRAY, &font);
+                draw_text_centered(
+                    "CONNECTION REJECTED",
+                    screen_w / 2.0,
+                    screen_h / 2.0 - 30.0,
+                    32.0,
+                    RED,
+                    &font,
+                );
+                draw_text_centered(
+                    reason,
+                    screen_w / 2.0,
+                    screen_h / 2.0 + 10.0,
+                    20.0,
+                    WHITE,
+                    &font,
+                );
+                draw_text_centered(
+                    "Press ESC to exit",
+                    screen_w / 2.0,
+                    screen_h / 2.0 + 50.0,
+                    14.0,
+                    GRAY,
+                    &font,
+                );
                 next_frame().await;
                 continue;
             }
             ClientState::Joining => {
                 if last_join_sent.elapsed() > Duration::from_millis(500) {
-                    let join_pkt = ClientMessage::Join { name: username.clone() };
+                    let join_pkt = ClientMessage::Join {
+                        name: username.clone(),
+                    };
                     if let Ok(ser) = bincode::serialize(&join_pkt) {
                         let _ = socket.send_to(&ser, server_addr);
                     }
@@ -282,8 +319,22 @@ async fn main() {
                 }
 
                 clear_background(Color::new(0.02, 0.04, 0.08, 1.0));
-                draw_text_centered("CONNECTING TO SERVER...", screen_w / 2.0, screen_h / 2.0 - 20.0, 30.0, CYAN, &font);
-                draw_text_centered(&format!("Server: {}", server_addr), screen_w / 2.0, screen_h / 2.0 + 20.0, 20.0, WHITE, &font);
+                draw_text_centered(
+                    "CONNECTING TO SERVER...",
+                    screen_w / 2.0,
+                    screen_h / 2.0 - 20.0,
+                    30.0,
+                    CYAN,
+                    &font,
+                );
+                draw_text_centered(
+                    &format!("Server: {}", server_addr),
+                    screen_w / 2.0,
+                    screen_h / 2.0 + 20.0,
+                    20.0,
+                    WHITE,
+                    &font,
+                );
                 next_frame().await;
                 continue;
             }
@@ -363,7 +414,8 @@ async fn main() {
             p.vy += (p.target_y - p.vy) * dt * 12.0;
 
             let diff = p.target_theta - p.vtheta;
-            let diff = (diff + std::f32::consts::PI).rem_euclid(2.0 * std::f32::consts::PI) - std::f32::consts::PI;
+            let diff = (diff + std::f32::consts::PI).rem_euclid(2.0 * std::f32::consts::PI)
+                - std::f32::consts::PI;
             p.vtheta += diff * dt * 12.0;
         }
 
@@ -394,7 +446,10 @@ async fn main() {
 
                 if is_key_pressed(KeyCode::Space) || is_mouse_button_pressed(MouseButton::Left) {
                     let (mx, my) = mouse_position();
-                    let click_in_viewport = mx >= view_x && mx <= view_x + view_w && my >= view_y && my <= view_y + view_h;
+                    let click_in_viewport = mx >= view_x
+                        && mx <= view_x + view_w
+                        && my >= view_y
+                        && my <= view_y + view_h;
                     if is_key_pressed(KeyCode::Space) || click_in_viewport {
                         let shoot = ClientMessage::Shoot;
                         if let Ok(ser) = bincode::serialize(&shoot) {
@@ -460,7 +515,14 @@ async fn main() {
             let remaining = round_time_left.max(0.0);
             let minutes = (remaining / 60.0).floor() as i32;
             let seconds = (remaining % 60.0).floor() as i32;
-            draw_text_ex_font(&format!("TIME LEFT: {:02}:{:02}", minutes, seconds), 220.0, 35.0, 20.0, YELLOW, &font);
+            draw_text_ex_font(
+                &format!("TIME LEFT: {:02}:{:02}", minutes, seconds),
+                220.0,
+                35.0,
+                20.0,
+                YELLOW,
+                &font,
+            );
         } else if current_match_state == MatchState::GameOver {
             draw_text_ex_font("ROUND FINISHED", 220.0, 35.0, 20.0, RED, &font);
         }
@@ -471,67 +533,206 @@ async fn main() {
         } else {
             "PLAY MODE"
         };
-        draw_text_ex_font(&format!("MODE: {}", status_str), sidebar_x, 35.0, 20.0, YELLOW, &font);
+        draw_text_ex_font(
+            &format!("MODE: {}", status_str),
+            sidebar_x,
+            35.0,
+            20.0,
+            YELLOW,
+            &font,
+        );
 
-        draw_rectangle_lines(view_x - 1.0, view_y - 1.0, view_w + 2.0, view_h + 2.0, 2.0, Color::new(0.1, 0.2, 0.3, 1.0));
+        draw_rectangle_lines(
+            view_x - 1.0,
+            view_y - 1.0,
+            view_w + 2.0,
+            view_h + 2.0,
+            2.0,
+            Color::new(0.1, 0.2, 0.3, 1.0),
+        );
 
         if current_match_state == MatchState::Lobby {
             // Draw Lobby screen
-            draw_rectangle(view_x, view_y, view_w, view_h, Color::new(0.04, 0.06, 0.12, 1.0));
-            draw_text_centered("MATCH LOBBY", view_x + view_w / 2.0, view_y + 80.0, 32.0, CYAN, &font);
-            
-            draw_text_centered("Players in Lobby (Max 4):", view_x + view_w / 2.0, view_y + 140.0, 18.0, LIGHTGRAY, &font);
-            
+            draw_rectangle(
+                view_x,
+                view_y,
+                view_w,
+                view_h,
+                Color::new(0.04, 0.06, 0.12, 1.0),
+            );
+            draw_text_centered(
+                "MATCH LOBBY",
+                view_x + view_w / 2.0,
+                view_y + 80.0,
+                32.0,
+                CYAN,
+                &font,
+            );
+
+            draw_text_centered(
+                "Players in Lobby (Max 4):",
+                view_x + view_w / 2.0,
+                view_y + 140.0,
+                18.0,
+                LIGHTGRAY,
+                &font,
+            );
+
             let mut ly = view_y + 180.0;
-            let mut humans = visual_players.values().filter(|p| !p.is_bot).collect::<Vec<&VisualPlayer>>();
+            let mut humans = visual_players
+                .values()
+                .filter(|p| !p.is_bot)
+                .collect::<Vec<&VisualPlayer>>();
             humans.sort_by_key(|p| p.id);
             for p in humans {
-                let role = if p.id == server_host_id { " [HOST]" } else { "" };
+                let role = if p.id == server_host_id {
+                    " [HOST]"
+                } else {
+                    ""
+                };
                 let p_color = if p.id == my_player_id { GREEN } else { WHITE };
-                draw_text_centered(&format!("- {}{}", p.name, role), view_x + view_w / 2.0, ly, 16.0, p_color, &font);
+                draw_text_centered(
+                    &format!("- {}{}", p.name, role),
+                    view_x + view_w / 2.0,
+                    ly,
+                    16.0,
+                    p_color,
+                    &font,
+                );
                 ly += 25.0;
             }
 
             let bot_status = if bots_enabled { "ENABLED" } else { "DISABLED" };
             let bot_color = if bots_enabled { GREEN } else { RED };
-            draw_text_centered(&format!("Bots AI Option: {}", bot_status), view_x + view_w / 2.0, view_y + 320.0, 16.0, bot_color, &font);
+            draw_text_centered(
+                &format!("Bots AI Option: {}", bot_status),
+                view_x + view_w / 2.0,
+                view_y + 320.0,
+                16.0,
+                bot_color,
+                &font,
+            );
 
             if is_host {
-                draw_text_centered("Press [ G ] to Start Match", view_x + view_w / 2.0, view_y + 400.0, 18.0, YELLOW, &font);
-                draw_text_centered("Press [ B ] to Toggle AI Bots", view_x + view_w / 2.0, view_y + 430.0, 14.0, GRAY, &font);
+                draw_text_centered(
+                    "Press [ G ] to Start Match",
+                    view_x + view_w / 2.0,
+                    view_y + 400.0,
+                    18.0,
+                    YELLOW,
+                    &font,
+                );
+                draw_text_centered(
+                    "Press [ B ] to Toggle AI Bots",
+                    view_x + view_w / 2.0,
+                    view_y + 430.0,
+                    14.0,
+                    GRAY,
+                    &font,
+                );
             } else {
-                draw_text_centered("Waiting for Host to start...", view_x + view_w / 2.0, view_y + 400.0, 16.0, LIGHTGRAY, &font);
+                draw_text_centered(
+                    "Waiting for Host to start...",
+                    view_x + view_w / 2.0,
+                    view_y + 400.0,
+                    16.0,
+                    LIGHTGRAY,
+                    &font,
+                );
             }
         } else if current_match_state == MatchState::GameOver {
-            draw_rectangle(view_x, view_y, view_w, view_h, Color::new(0.03, 0.04, 0.07, 1.0));
-            draw_text_centered("MATCH OVER", view_x + view_w / 2.0, view_y + 80.0, 34.0, RED, &font);
-            draw_text_centered("The two-minute round has ended.", view_x + view_w / 2.0, view_y + 120.0, 18.0, LIGHTGRAY, &font);
+            draw_rectangle(
+                view_x,
+                view_y,
+                view_w,
+                view_h,
+                Color::new(0.03, 0.04, 0.07, 1.0),
+            );
+            draw_text_centered(
+                "MATCH OVER",
+                view_x + view_w / 2.0,
+                view_y + 80.0,
+                34.0,
+                RED,
+                &font,
+            );
+            draw_text_centered(
+                "The two-minute round has ended.",
+                view_x + view_w / 2.0,
+                view_y + 120.0,
+                18.0,
+                LIGHTGRAY,
+                &font,
+            );
 
             let popup_w = 420.0;
             let popup_h = 250.0;
             let popup_x = view_x + (view_w - popup_w) / 2.0;
             let popup_y = view_y + (view_h - popup_h) / 2.0;
-            draw_rectangle(popup_x, popup_y, popup_w, popup_h, Color::new(0.02, 0.05, 0.10, 0.95));
+            draw_rectangle(
+                popup_x,
+                popup_y,
+                popup_w,
+                popup_h,
+                Color::new(0.02, 0.05, 0.10, 0.95),
+            );
             draw_rectangle_lines(popup_x, popup_y, popup_w, popup_h, 2.0, CYAN);
 
             match game_over_menu {
                 GameOverMenuState::Main => {
-                    draw_text_centered("Choose an option", popup_x + popup_w / 2.0, popup_y + 42.0, 22.0, WHITE, &font);
-                    if draw_popup_button("1. Play Again", popup_x + 60.0, popup_y + 90.0, 300.0, 40.0, &font) && is_host {
+                    draw_text_centered(
+                        "Choose an option",
+                        popup_x + popup_w / 2.0,
+                        popup_y + 42.0,
+                        22.0,
+                        WHITE,
+                        &font,
+                    );
+                    if draw_popup_button(
+                        "1. Play Again",
+                        popup_x + 60.0,
+                        popup_y + 90.0,
+                        300.0,
+                        40.0,
+                        &font,
+                    ) && is_host
+                    {
                         game_over_menu = GameOverMenuState::ChooseLevel;
                     }
-                    if draw_popup_button("2. Back to Lobby", popup_x + 60.0, popup_y + 145.0, 300.0, 40.0, &font) && is_host {
+                    if draw_popup_button(
+                        "2. Back to Lobby",
+                        popup_x + 60.0,
+                        popup_y + 145.0,
+                        300.0,
+                        40.0,
+                        &font,
+                    ) && is_host
+                    {
                         let msg = ClientMessage::BackToLobby;
                         if let Ok(ser) = bincode::serialize(&msg) {
                             let _ = socket.send_to(&ser, server_addr);
                         }
                     }
                     if !is_host {
-                        draw_text_centered("Waiting for the host...", popup_x + popup_w / 2.0, popup_y + 215.0, 14.0, GRAY, &font);
+                        draw_text_centered(
+                            "Waiting for the host...",
+                            popup_x + popup_w / 2.0,
+                            popup_y + 215.0,
+                            14.0,
+                            GRAY,
+                            &font,
+                        );
                     }
                 }
                 GameOverMenuState::ChooseLevel => {
-                    draw_text_centered("Pick a level to restart", popup_x + popup_w / 2.0, popup_y + 38.0, 20.0, WHITE, &font);
+                    draw_text_centered(
+                        "Pick a level to restart",
+                        popup_x + popup_w / 2.0,
+                        popup_y + 38.0,
+                        20.0,
+                        WHITE,
+                        &font,
+                    );
                     let level_buttons = [
                         (0usize, "1. Level 1"),
                         (1usize, "2. Level 2"),
@@ -540,7 +741,9 @@ async fn main() {
                     ];
                     let mut button_y = popup_y + 72.0;
                     for (level_idx, label) in level_buttons {
-                        if draw_popup_button(label, popup_x + 55.0, button_y, 310.0, 32.0, &font) && is_host {
+                        if draw_popup_button(label, popup_x + 55.0, button_y, 310.0, 32.0, &font)
+                            && is_host
+                        {
                             let req = ClientMessage::RequestLevel { level_idx };
                             if let Ok(ser) = bincode::serialize(&req) {
                                 let _ = socket.send_to(&ser, server_addr);
@@ -548,7 +751,14 @@ async fn main() {
                         }
                         button_y += 38.0;
                     }
-                    if draw_popup_button("Back", popup_x + 55.0, popup_y + 226.0, 310.0, 24.0, &font) {
+                    if draw_popup_button(
+                        "Back",
+                        popup_x + 55.0,
+                        popup_y + 226.0,
+                        310.0,
+                        24.0,
+                        &font,
+                    ) {
                         game_over_menu = GameOverMenuState::Main;
                     }
                 }
@@ -557,20 +767,65 @@ async fn main() {
             // Render Viewport
             if let Some(local_player) = local_player_opt {
                 if local_player.is_alive {
-                    render_3d_viewport(view_x, view_y, view_w, view_h, local_player, &visual_players, &map_cells, map_width, map_height, &active_lasers, &font);
+                    render_3d_viewport(
+                        view_x,
+                        view_y,
+                        view_w,
+                        view_h,
+                        local_player,
+                        &visual_players,
+                        &map_cells,
+                        map_width,
+                        map_height,
+                        &active_lasers,
+                        &font,
+                    );
                 } else {
-                    draw_rectangle(view_x, view_y, view_w, view_h, Color::new(0.15, 0.02, 0.02, 0.8));
-                    draw_text_centered("YOU ARE ELIMINATED", view_x + view_w / 2.0, view_y + view_h / 2.0 - 20.0, 32.0, RED, &font);
-                    draw_text_centered("RESPAWNING SOON...", view_x + view_w / 2.0, view_y + view_h / 2.0 + 25.0, 20.0, WHITE, &font);
+                    draw_rectangle(
+                        view_x,
+                        view_y,
+                        view_w,
+                        view_h,
+                        Color::new(0.15, 0.02, 0.02, 0.8),
+                    );
+                    draw_text_centered(
+                        "YOU ARE ELIMINATED",
+                        view_x + view_w / 2.0,
+                        view_y + view_h / 2.0 - 20.0,
+                        32.0,
+                        RED,
+                        &font,
+                    );
+                    draw_text_centered(
+                        "RESPAWNING SOON...",
+                        view_x + view_w / 2.0,
+                        view_y + view_h / 2.0 + 25.0,
+                        20.0,
+                        WHITE,
+                        &font,
+                    );
                 }
             } else {
                 draw_rectangle(view_x, view_y, view_w, view_h, BLACK);
-                draw_text_centered("SPAWNING...", view_x + view_w / 2.0, view_y + view_h / 2.0, 24.0, WHITE, &font);
+                draw_text_centered(
+                    "SPAWNING...",
+                    view_x + view_w / 2.0,
+                    view_y + view_h / 2.0,
+                    24.0,
+                    WHITE,
+                    &font,
+                );
             }
         }
 
         let fps = get_fps();
-        let fps_color = if fps >= 60 { GREEN } else if fps >= 50 { YELLOW } else { RED };
+        let fps_color = if fps >= 60 {
+            GREEN
+        } else if fps >= 50 {
+            YELLOW
+        } else {
+            RED
+        };
         let fps_text = format!("FPS: {}", fps);
         let text_w = measure_text(&fps_text, Some(&font), 18, 1.0).width;
         let fps_x = screen_w - 16.0 - text_w;
@@ -578,9 +833,29 @@ async fn main() {
         draw_text_ex_font(&fps_text, fps_x, fps_y, 18.0, fps_color, &font);
 
         // Scoreboard Panel
-        draw_rectangle(sidebar_x, view_y, sidebar_w, 200.0, Color::new(0.04, 0.06, 0.12, 0.8));
-        draw_rectangle_lines(sidebar_x, view_y, sidebar_w, 200.0, 1.0, Color::new(0.1, 0.15, 0.25, 1.0));
-        draw_text_ex_font("SCOREBOARD", sidebar_x + 10.0, view_y + 20.0, 18.0, CYAN, &font);
+        draw_rectangle(
+            sidebar_x,
+            view_y,
+            sidebar_w,
+            200.0,
+            Color::new(0.04, 0.06, 0.12, 0.8),
+        );
+        draw_rectangle_lines(
+            sidebar_x,
+            view_y,
+            sidebar_w,
+            200.0,
+            1.0,
+            Color::new(0.1, 0.15, 0.25, 1.0),
+        );
+        draw_text_ex_font(
+            "SCOREBOARD",
+            sidebar_x + 10.0,
+            view_y + 20.0,
+            18.0,
+            CYAN,
+            &font,
+        );
 
         draw_text_ex_font("Player", sidebar_x + 10.0, view_y + 45.0, 13.0, GRAY, &font);
         draw_text_ex_font("K", sidebar_x + 170.0, view_y + 45.0, 13.0, GRAY, &font);
@@ -588,21 +863,60 @@ async fn main() {
         draw_text_ex_font("HP", sidebar_x + 230.0, view_y + 45.0, 13.0, GRAY, &font);
 
         let mut sorted_players: Vec<&VisualPlayer> = visual_players.values().collect();
-        sorted_players.sort_by(|a, b| {
-            b.score.cmp(&a.score).then_with(|| a.deaths.cmp(&b.deaths))
-        });
+        sorted_players.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.deaths.cmp(&b.deaths)));
 
         let mut row_y = view_y + 65.0;
         for p in sorted_players.iter().take(8) {
-            let name_color = if p.id == my_player_id { GREEN } else if p.is_bot { ORANGE } else { WHITE };
-            let name_display = if p.name.len() > 14 { format!("{}...", &p.name[..11]) } else { p.name.clone() };
+            let name_color = if p.id == my_player_id {
+                GREEN
+            } else if p.is_bot {
+                ORANGE
+            } else {
+                WHITE
+            };
+            let name_display = if p.name.len() > 14 {
+                format!("{}...", &p.name[..11])
+            } else {
+                p.name.clone()
+            };
 
-            draw_text_ex_font(&name_display, sidebar_x + 10.0, row_y, 14.0, name_color, &font);
-            draw_text_ex_font(&p.score.to_string(), sidebar_x + 170.0, row_y, 14.0, name_color, &font);
-            draw_text_ex_font(&p.deaths.to_string(), sidebar_x + 200.0, row_y, 14.0, name_color, &font);
-            
-            let hp_color = if p.health > 50 { GREEN } else if p.health > 25 { YELLOW } else { RED };
-            let hp_text = if p.is_alive { p.health.to_string() } else { "DEAD".to_string() };
+            draw_text_ex_font(
+                &name_display,
+                sidebar_x + 10.0,
+                row_y,
+                14.0,
+                name_color,
+                &font,
+            );
+            draw_text_ex_font(
+                &p.score.to_string(),
+                sidebar_x + 170.0,
+                row_y,
+                14.0,
+                name_color,
+                &font,
+            );
+            draw_text_ex_font(
+                &p.deaths.to_string(),
+                sidebar_x + 200.0,
+                row_y,
+                14.0,
+                name_color,
+                &font,
+            );
+
+            let hp_color = if p.health > 50 {
+                GREEN
+            } else if p.health > 25 {
+                YELLOW
+            } else {
+                RED
+            };
+            let hp_text = if p.is_alive {
+                p.health.to_string()
+            } else {
+                "DEAD".to_string()
+            };
             draw_text_ex_font(&hp_text, sidebar_x + 230.0, row_y, 14.0, hp_color, &font);
 
             row_y += 18.0;
@@ -611,9 +925,29 @@ async fn main() {
         // Mini-Map Panel
         let map_area_y = view_y + 220.0;
         let map_area_h = (screen_h - map_area_y - 150.0).clamp(160.0, 320.0);
-        draw_rectangle(sidebar_x, map_area_y, sidebar_w, map_area_h, Color::new(0.04, 0.06, 0.12, 0.8));
-        draw_rectangle_lines(sidebar_x, map_area_y, sidebar_w, map_area_h, 1.0, Color::new(0.1, 0.15, 0.25, 1.0));
-        draw_text_ex_font("MINI MAP", sidebar_x + 10.0, map_area_y + 20.0, 18.0, CYAN, &font);
+        draw_rectangle(
+            sidebar_x,
+            map_area_y,
+            sidebar_w,
+            map_area_h,
+            Color::new(0.04, 0.06, 0.12, 0.8),
+        );
+        draw_rectangle_lines(
+            sidebar_x,
+            map_area_y,
+            sidebar_w,
+            map_area_h,
+            1.0,
+            Color::new(0.1, 0.15, 0.25, 1.0),
+        );
+        draw_text_ex_font(
+            "MINI MAP",
+            sidebar_x + 10.0,
+            map_area_y + 20.0,
+            18.0,
+            CYAN,
+            &font,
+        );
 
         if map_width > 0 && map_height > 0 {
             render_minimap(
@@ -633,9 +967,29 @@ async fn main() {
         // Keyboard Instructions Panel
         let help_y = map_area_y + map_area_h + 15.0;
         let help_h = (screen_h - help_y - 20.0).max(95.0);
-        draw_rectangle(sidebar_x, help_y, sidebar_w, help_h, Color::new(0.04, 0.06, 0.12, 0.8));
-        draw_rectangle_lines(sidebar_x, help_y, sidebar_w, help_h, 1.0, Color::new(0.1, 0.15, 0.25, 1.0));
-        draw_text_ex_font("KEYBOARD HELP", sidebar_x + 10.0, help_y + 20.0, 14.0, CYAN, &font);
+        draw_rectangle(
+            sidebar_x,
+            help_y,
+            sidebar_w,
+            help_h,
+            Color::new(0.04, 0.06, 0.12, 0.8),
+        );
+        draw_rectangle_lines(
+            sidebar_x,
+            help_y,
+            sidebar_w,
+            help_h,
+            1.0,
+            Color::new(0.1, 0.15, 0.25, 1.0),
+        );
+        draw_text_ex_font(
+            "KEYBOARD HELP",
+            sidebar_x + 10.0,
+            help_y + 20.0,
+            14.0,
+            CYAN,
+            &font,
+        );
 
         let help_text = if current_match_state == MatchState::GameOver {
             vec![
@@ -653,12 +1007,7 @@ async fn main() {
                     "",
                 ]
             } else {
-                vec![
-                    "Waiting for host to start...",
-                    "",
-                    "",
-                    "",
-                ]
+                vec!["Waiting for host to start...", "", "", ""]
             }
         } else {
             vec![
@@ -682,8 +1031,22 @@ async fn main() {
             3 => "Randomly Generated Labyrinth".to_string(),
             _ => "Unknown Labyrinth".to_string(),
         };
-        draw_text_ex_font(&format!("Level: {}", level_name), view_x, view_y + view_h + 28.0, 16.0, LIGHTGRAY, &font);
-        draw_text_ex_font("ESC: Leave Game", sidebar_x, view_y + view_h + 28.0, 16.0, RED, &font);
+        draw_text_ex_font(
+            &format!("Level: {}", level_name),
+            view_x,
+            view_y + view_h + 28.0,
+            16.0,
+            LIGHTGRAY,
+            &font,
+        );
+        draw_text_ex_font(
+            "ESC: Leave Game",
+            sidebar_x,
+            view_y + view_h + 28.0,
+            16.0,
+            RED,
+            &font,
+        );
 
         next_frame().await;
     }
@@ -721,8 +1084,16 @@ pub fn draw_text_ex_font(text: &str, x: f32, y: f32, size: f32, color: Color, fo
 fn draw_popup_button(text: &str, x: f32, y: f32, w: f32, h: f32, font: &Font) -> bool {
     let (mx, my) = mouse_position();
     let hover = mx >= x && mx <= x + w && my >= y && my <= y + h;
-    let bg = if hover { Color::new(0.0, 0.80, 0.72, 0.96) } else { Color::new(0.05, 0.12, 0.22, 0.96) };
-    let border = if hover { WHITE } else { Color::new(0.15, 0.28, 0.40, 1.0) };
+    let bg = if hover {
+        Color::new(0.0, 0.80, 0.72, 0.96)
+    } else {
+        Color::new(0.05, 0.12, 0.22, 0.96)
+    };
+    let border = if hover {
+        WHITE
+    } else {
+        Color::new(0.15, 0.28, 0.40, 1.0)
+    };
     let text_color = if hover { BLACK } else { WHITE };
 
     draw_rectangle(x, y, w, h, bg);
