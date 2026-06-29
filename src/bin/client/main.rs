@@ -571,7 +571,11 @@ async fn main() {
 
         let fps = get_fps();
         let fps_color = if fps >= 60 { GREEN } else if fps >= 50 { YELLOW } else { RED };
-        draw_text_ex_font(&format!("FPS: {}", fps), sidebar_x + 10.0, 32.0, 18.0, fps_color, &font);
+        let fps_text = format!("FPS: {}", fps);
+        let text_w = measure_text(&fps_text, Some(&font), 18, 1.0).width;
+        let fps_x = screen_w - 16.0 - text_w;
+        let fps_y = 14.0;
+        draw_text_ex_font(&fps_text, fps_x, fps_y, 18.0, fps_color, &font);
 
         // Scoreboard Panel
         draw_rectangle(sidebar_x, view_y, sidebar_w, 200.0, Color::new(0.04, 0.06, 0.12, 0.8));
