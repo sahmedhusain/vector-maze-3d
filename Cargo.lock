@@ -208,16 +208,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mp"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "macroquad",
- "rand",
- "serde",
-]
-
-[[package]]
 name = "ndk-sys"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -375,6 +365,16 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "vector-maze-3d"
+version = "1.0.0"
+dependencies = [
+ "bincode",
+ "macroquad",
+ "rand",
+ "serde",
+]
 
 [[package]]
 name = "wasi"
